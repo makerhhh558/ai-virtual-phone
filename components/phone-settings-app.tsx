@@ -243,6 +243,16 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         onNotice(next ? "已开启后台保活" : "已关闭后台保活");
     }, [onNotice]);
 
+    const ocrItem = SETTINGS_MENU.find(i => i.id === "ocr")!;
+    const ocrFeaturedItem: FeaturedCardItem = {
+        id: ocrItem.id,
+        icon: ocrItem.icon,
+        label: ocrItem.label,
+        desc: "图像识别关闭时，用 OCR 提取图中文字作为回退",
+        iconColor: ocrItem.iconColor,
+        onClick: () => setCurrentPage("ocr"),
+    };
+
     const imageGenerationItem = SETTINGS_MENU.find(i => i.id === "imageGeneration")!;
     const imageGenerationFeaturedItem: FeaturedCardItem = {
         id: imageGenerationItem.id,
@@ -373,8 +383,11 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                         <CardGrid
                             label="API Config"
                             labelClassName="settings-menu-section-title"
-                            items={SETTINGS_MENU.filter(item => ["api", "ocr", "voice"].includes(item.id)).map(makeCardItem)}
+                            items={SETTINGS_MENU.filter(item => ["api", "voice"].includes(item.id)).map(makeCardItem)}
                         />
+                        <div className="mt-[10px]">
+                            <FeaturedCard item={ocrFeaturedItem} />
+                        </div>
                         <div className="settings-data-rules-section">
                             <h3 className="settings-menu-section-title">Data & Rules</h3>
                             <div className="mt-[10px] flex flex-col gap-3">
