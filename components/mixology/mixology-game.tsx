@@ -5,7 +5,7 @@
 // 装饰材料的 CSS 以 <style> 注入本画面容器（认 .mix-* 官方语义类）。
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ChevronLeft, Copy, CornerDownRight, History, Pencil, Plus, RotateCcw, Send, SlidersHorizontal, X } from "lucide-react";
+import { ChevronLeft, Copy, History, MoreHorizontal, Pencil, Plus, RotateCcw, Send, WandSparkles, X } from "lucide-react";
 import { continueMix, editMixTurn, generateMixReply, mixTurnRawText, refreshMixOpening, regenerateMixTail, rerollMixReply, runMixSessionEnd, truncateMixAfterTurn } from "@/lib/mixology/engine";
 import { getMixMaterial, getMixSession, listMixPickables, resolveMixRecipeMaterials, saveMixSession } from "@/lib/mixology/storage";
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
@@ -125,6 +125,11 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const abortRef = useRef<AbortController | null>(null);
     const wheelRef = useRef<HTMLDivElement | null>(null);
+    /**
+     * 滚动落点：还没开口的局停在扉页顶上（开场画布要从头看），聊过的局停在最新一条上。
+     * free = 用户自己翻过了，别再拽他。
+     */
+    const stickRef = useRef<"top" | "bottom" | "free">("bottom");
 
     const handleWheelScroll = useCallback(() => {
         const el = wheelRef.current;
@@ -225,10 +230,38 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         return vars as CSSProperties;
     }, [session?.state]);
 
-    useEffect(() => {
+    /** 按当前落点滚一次 */
+    const applyStick = useCallback(() => {
         const el = scrollRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
-    }, [session?.turns.length, busy]);
+        if (!el || stickRef.current === "free") return;
+        el.scrollTop = stickRef.current === "top" ? 0 : el.scrollHeight;
+    }, []);
+
+    /** 这一局有没有人开过口——只有开场白的局算「还没开始」 */
+    const chatted = useMemo(() => (session?.turns ?? []).some((turn) => turn.role === "user"), [session?.turns]);
+
+    useEffect(() => {
+        stickRef.current = chatted ? "bottom" : "top";
+        applyStick();
+    }, [sessionId, chatted, session?.turns.length, busy, applyStick]);
+
+    /**
+     * 开场画布是沙盒 iframe，高度由画布自己异步报上来：挂载那一刻它还只有几十像素，
+     * 等它撑到几千像素，下面的内容整体被推下去。Chrome 有 scroll anchoring 会自己补偿，
+     * iOS Safari 没有这个特性，滚动位置原地不动，于是就停在画布中间——既不贴顶也不贴底。
+     * 所以画布报完高度要再落一次。
+     */
+    const handleCanvasHeight = useCallback(() => { applyStick(); }, [applyStick]);
+
+    /** 用户自己翻页了就撒手，别在画布撑高时把他拽回去 */
+    const handleScroll = useCallback(() => {
+        const el = scrollRef.current;
+        if (!el || stickRef.current === "free") return;
+        const gapTop = el.scrollTop;
+        const gapBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        const stuck = stickRef.current === "top" ? gapTop <= 8 : gapBottom <= 8;
+        if (!stuck) stickRef.current = "free";
+    }, []);
 
     useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -376,14 +409,14 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                 <button type="button" className="mix-icon-btn" onClick={onBack} aria-label="返回"><ChevronLeft size={20} /></button>
                 <div className="mix-game-title">{session.charName}</div>
                 <button type="button" className="mix-icon-btn" onClick={() => setRecipeOpen(true)} disabled={busy} aria-label="修改方案" title="修改方案">
-                    <SlidersHorizontal size={17} />
+                    <MoreHorizontal size={20} />
                 </button>
             </div>
             <StateBar state={session.state ?? {}} />
-            <div className="mix-game-scroll" ref={scrollRef}>
+            <div className="mix-game-scroll" ref={scrollRef} onScroll={handleScroll}>
                 {assets.canvasHtml ? (
                     <div className="mix-game-canvas">
-                        <MixRichText text={assets.canvasHtml} />
+                        <MixRichText text={assets.canvasHtml} onHeight={handleCanvasHeight} />
                     </div>
                 ) : null}
                 {session.turns.map((turn, idx) => {
@@ -473,7 +506,7 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                     aria-label="继续生成"
                     title="继续生成"
                 >
-                    <CornerDownRight size={18} />
+                    <WandSparkles size={18} />
                 </button>
                 <button type="button" className="mix-send-btn" onClick={handleSend} disabled={busy || !input.trim()} aria-label="发送">
                     <Send size={16} />
