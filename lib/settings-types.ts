@@ -126,6 +126,18 @@ export type ApiConfig = {
     preventEmptyGenerateRambling?: boolean;
 };
 
+// --- OCR API Config ---
+export type OcrApiConfig = {
+    id: string;
+    name?: string;
+    provider: string;
+    apiKey: string;
+    baseUrl?: string;
+    defaultModel?: string;
+    /** OCR language hint, e.g. "auto", "zh", "en", "ja" */
+    language?: string;
+};
+
 // --- VoiceApiConfig (migrated from voice-settings.tsx) ---
 export type VoiceApiConfig = {
     id: string;

@@ -5,6 +5,7 @@ import type {
     RegexConfig,
     RegexRule,
     ApiConfig,
+    OcrApiConfig,
     VoiceApiConfig,
     ImageGenerationSettings,
     BindingConfig,
@@ -79,6 +80,7 @@ registerKvMigration(FOLLOW_UP_CONFIG_KEY);
 registerKvMigration(CHAT_SEND_CONFIG_KEY);
 registerKvMigration(USER_IDENTITIES_KEY);
 registerKvMigration(LEGACY_OVERRIDES_KEY);
+registerKvMigration("ai_phone_ocr_configs_v1");
 
 // --- Helpers ---
 function generateId(prefix: string) {
@@ -611,6 +613,27 @@ export function loadApiConfigs(): ApiConfig[] {
 export function saveApiConfigs(configs: ApiConfig[]): void {
     if (typeof window === "undefined") return;
     kvSet(API_CONFIGS_KEY, JSON.stringify(configs.map(normalizeApiConfig)));
+}
+
+// --- OCR API Configs ──────────────────────────────────────────
+
+const OCR_CONFIGS_KEY = "ai_phone_ocr_configs_v1";
+
+export function loadOcrConfigs(): OcrApiConfig[] {
+    if (typeof window === "undefined") return [];
+    try {
+        const raw = kvGet(OCR_CONFIGS_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as OcrApiConfig[];
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+export function saveOcrConfigs(configs: OcrApiConfig[]): void {
+    if (typeof window === "undefined") return;
+    kvSet(OCR_CONFIGS_KEY, JSON.stringify(configs));
 }
 
 // --- Voice Configs ──────────────────────────────────────────

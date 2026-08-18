@@ -6,6 +6,7 @@ import { ConfirmDialog } from "./ui/modal";
 import { useAccount } from "@/lib/account-context";
 import { changeAccountPassword } from "@/lib/account-client";
 import { ApiSettings } from "./settings/api-settings";
+import { OcrSettings } from "./settings/ocr-settings";
 import { VoiceSettings } from "./settings/voice-settings";
 import { ImageGenerationSettings } from "./settings/image-generation-settings";
 import { PresetManager } from "./settings/preset-manager";
@@ -42,6 +43,7 @@ type SettingsPageProps = {
 type SubPage =
     | "main"
     | "api"
+    | "ocr"
     | "voice"
     | "imageGeneration"
     | "presets"
@@ -58,6 +60,7 @@ type SubPage =
 
 const SETTINGS_MENU = [
     { id: "api", icon: HardDrive, label: "API 设置", desc: "大模型接口", iconColor: BINDING_ACCENTS.api },
+    { id: "ocr", icon: FileText, label: "OCR API", desc: "文字识别", iconColor: CONTENT_APP_ACCENTS.reading },
     { id: "voice", icon: Mic, label: "语音 API", desc: "语音合成", iconColor: BINDING_ACCENTS.voice },
     { id: "imageGeneration", icon: Image, label: "图像生成 API", desc: "模型、参考图与提示词", iconColor: CONTENT_APP_ACCENTS.moments },
     { id: "presets", icon: Fingerprint, label: "预设", desc: "角色预设", iconColor: BINDING_ACCENTS.preset },
@@ -172,7 +175,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
 
     const defaultTitle = currentPage === "main"
         ? "设置"
-        : currentPage === "api" || currentPage === "voice" || currentPage === "imageGeneration" || currentPage === "presets" || currentPage === "worldbook" || currentPage === "regex" || currentPage === "identity"
+        : currentPage === "api" || currentPage === "ocr" || currentPage === "voice" || currentPage === "imageGeneration" || currentPage === "presets" || currentPage === "worldbook" || currentPage === "regex" || currentPage === "identity"
             ? ""
             : currentPage === "moderation"
                 ? "管理中心"
@@ -274,6 +277,8 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
         switch (currentPage) {
             case "api":
                 return <ApiSettings />;
+            case "ocr":
+                return <OcrSettings />;
             case "voice":
                 return <VoiceSettings />;
             case "imageGeneration":
@@ -368,7 +373,7 @@ export function PhoneSettingsApp({ onClose, onNotice }: SettingsPageProps) {
                         <CardGrid
                             label="API Config"
                             labelClassName="settings-menu-section-title"
-                            items={SETTINGS_MENU.filter(item => ["api", "voice"].includes(item.id)).map(makeCardItem)}
+                            items={SETTINGS_MENU.filter(item => ["api", "ocr", "voice"].includes(item.id)).map(makeCardItem)}
                         />
                         <div className="settings-data-rules-section">
                             <h3 className="settings-menu-section-title">Data & Rules</h3>
