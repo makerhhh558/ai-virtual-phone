@@ -2774,38 +2774,36 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
             return { hasVisible: false, stateValues, triggerCall, hasDecline };
         }
 
-        // ── Enforce streaming reply count limit ──
-        // Merge excess text-only parts into the last allowed slot so total bubble count
-        // does not exceed the user-configured maximum.
+        // ── Enforce streaming reply count limit (text bubbles only) ──
+        // Rich-media parts (images, red packets, gifts, stickers, etc.) are exempt —
+        // only pure-text bubbles count toward the limit.
         const replyCountLimit = getStreamingReplyCount(session.id);
-        if (filteredParts.length > replyCountLimit) {
-            // Keep first (limit - 1) parts intact, merge the rest into the last slot
-            const keepCount = replyCountLimit - 1;
-            const kept = filteredParts.slice(0, keepCount);
-            const overflow = filteredParts.slice(keepCount);
-            // Merge overflow: rich-media parts stay separate (up to limit), text parts get concatenated
-            const mergedContent: string[] = [];
-            const mergedRich: typeof filteredParts = [];
-            for (const p of overflow) {
-                if (p.mediaType) {
-                    mergedRich.push(p);
-                } else {
-                    mergedContent.push(p.content);
-                }
+        const textPartIndices: number[] = [];
+        for (let i = 0; i < filteredParts.length; i++) {
+            if (!filteredParts[i].mediaType) textPartIndices.push(i);
+        }
+        if (textPartIndices.length > replyCountLimit) {
+            // Indices of text parts that should be merged into the last allowed text slot
+            const keepTextCount = replyCountLimit;
+            const lastKeepIdx = textPartIndices[keepTextCount - 1]; // last text part to keep
+            const overflowIndices = new Set(textPartIndices.slice(keepTextCount));
+            // Collect overflow text content
+            const overflowTexts: string[] = [];
+            for (const idx of overflowIndices) {
+                overflowTexts.push(filteredParts[idx].content);
             }
-            // The merged text becomes one part
-            if (mergedContent.length > 0) {
-                kept.push({ content: mergedContent.join("\n\n") });
+            // Append overflow text to the last kept text part
+            if (overflowTexts.length > 0) {
+                filteredParts[lastKeepIdx] = {
+                    ...filteredParts[lastKeepIdx],
+                    content: filteredParts[lastKeepIdx].content + "\n\n" + overflowTexts.join("\n\n"),
+                };
             }
-            // Append any rich-media parts that couldn't be merged (they need their own bubbles)
-            kept.push(...mergedRich);
-            // Truncate to hard limit in case rich-media parts pushed us over
-            filteredParts.length = 0;
-            filteredParts.push(...kept.slice(0, replyCountLimit));
-            afterPublishEffects.length = 0;
-            // Rebuild afterPublishEffects to match new filteredParts length
-            for (let i = 0; i < filteredParts.length; i++) {
-                afterPublishEffects.push(undefined);
+            // Remove overflow parts (iterate in reverse to preserve indices)
+            const sortedOverflow = [...overflowIndices].sort((a, b) => b - a);
+            for (const idx of sortedOverflow) {
+                filteredParts.splice(idx, 1);
+                afterPublishEffects.splice(idx, 1);
             }
         }
 
