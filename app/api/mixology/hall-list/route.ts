@@ -2,11 +2,11 @@ import { NextResponse } from "next/server";
 
 import { getCurrentAccount } from "@/lib/server/account-auth";
 import {
-  encodeSupabaseFilter,
-  formatSupabaseRestError,
-  getSupabaseServerConfig,
-  supabaseRestFetch,
-} from "@/lib/server/supabase-rest";
+  encodeMixologyFilter,
+  formatMixologyError,
+  getMixologySupabaseConfig,
+  mixologyRestFetch,
+} from "@/lib/server/mixology-supabase";
 
 const MATERIAL_KINDS = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "garnish", "encore", "filter", "mechanism"] as const;
 type HallType = "material" | "recipe";
@@ -110,7 +110,7 @@ async function loadRows(type: HallType, authorId: string | null, kind: string | 
   const body = type === "material"
     ? { p_author_id: authorId, p_kind: kind }
     : { p_author_id: authorId };
-  const rpc = await supabaseRestFetch<HallListRow[]>(rpcPath, {
+  const rpc = await mixologyRestFetch<HallListRow[]>(rpcPath, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -122,16 +122,16 @@ async function loadRows(type: HallType, authorId: string | null, kind: string | 
     ? "id,kind,name,hook,cover,tags,author_id,author_name,author_avatar,like_count,save_count,view_count,comment_count,created_at,updated_at"
     : "id,name,intro,cover,char_name,part_names,author_id,author_name,author_avatar,like_count,save_count,view_count,comment_count,created_at,updated_at";
   const filters = ["deleted_at=is.null", `select=${columns}`, "order=updated_at.desc", "limit=100"];
-  if (authorId) filters.unshift(`author_id=eq.${encodeSupabaseFilter(authorId)}`);
-  if (type === "material" && kind) filters.unshift(`kind=eq.${encodeSupabaseFilter(kind)}`);
-  const fallback = await supabaseRestFetch<HallListRow[]>(`${table}?${filters.join("&")}`);
+  if (authorId) filters.unshift(`author_id=eq.${encodeMixologyFilter(authorId)}`);
+  if (type === "material" && kind) filters.unshift(`kind=eq.${encodeMixologyFilter(kind)}`);
+  const fallback = await mixologyRestFetch<HallListRow[]>(`${table}?${filters.join("&")}`);
   if (!fallback.ok) return { ok: false as const, error: fallback.error, status: fallback.status };
   return { ok: true as const, data: fallback.data, optimized: false };
 }
 
 export async function GET(request: Request) {
   try {
-    if (!getSupabaseServerConfig()) {
+    if (!getMixologySupabaseConfig()) {
       return NextResponse.json({ ok: true, entries: [], setupRequired: true });
     }
     const url = new URL(request.url);
@@ -155,6 +155,6 @@ export async function GET(request: Request) {
       .filter((entry): entry is Record<string, unknown> => Boolean(entry));
     return NextResponse.json({ ok: true, entries }, mine ? undefined : { headers: PUBLIC_CACHE_HEADERS });
   } catch (err) {
-    return NextResponse.json({ ok: false, entries: [], error: formatSupabaseRestError(err) }, { status: 500 });
+    return NextResponse.json({ ok: false, entries: [], error: formatMixologyError(err) }, { status: 500 });
   }
 }

@@ -142,7 +142,7 @@ export function startMixSession(
     if (!card || card.kind !== "character") {
         throw new ChatEngineError("特调里没有角色卡，装不满这一杯。");
     }
-    // 代入名：显式传入 > 面具材料的代入名（装配器同规则，这里快照进对局供界面用）
+    // 用户的名字：显式传入 > 面具材料里填的（装配器同规则，这里快照进对局供界面用）
     const personaId = mixSlotFirstId(recipe.slots, "persona");
     const personaMat = personaId ? getMixMaterial(personaId) : null;
     const personaUserName = personaMat?.kind === "persona" ? personaMat.userName?.trim() : undefined;
@@ -406,6 +406,7 @@ export async function generateMixReply(
     sessionId: string,
     userText: string,
     signal?: AbortSignal,
+    onUserTurn?: () => void,
 ): Promise<MixReplyResult> {
     const current = getMixSession(sessionId);
     if (!current) throw new ChatEngineError("对局不存在。");
@@ -423,6 +424,9 @@ export async function generateMixReply(
     };
     const withUser: MixSession = { ...before.session, turns: [...before.session.turns, userTurn] };
     saveMixSession(withUser);
+    // 落杯前钩子是 await 的，这句落库比调用方那次「同步回读」晚一拍，
+    // 所以得主动喊一声：用户气泡要在模型回来之前就上屏
+    onUserTurn?.();
     // 这条路径的落杯前已经跑过了，别在 runMixGeneration 里重复触发
     return runMixGeneration(withUser, before.note, signal, true);
 }

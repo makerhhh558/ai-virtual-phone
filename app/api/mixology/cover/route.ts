@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
 import {
-  encodeSupabaseFilter,
-  formatSupabaseRestError,
-  getSupabaseServerConfig,
-  supabaseRestFetch,
-} from "@/lib/server/supabase-rest";
+  encodeMixologyFilter,
+  formatMixologyError,
+  getMixologySupabaseConfig,
+  mixologyRestFetch,
+} from "@/lib/server/mixology-supabase";
 
 type CoverRow = { cover?: unknown };
 type HallType = "material" | "recipe";
@@ -45,14 +45,14 @@ const IMMUTABLE_HEADERS = {
 
 export async function GET(request: Request) {
   try {
-    if (!getSupabaseServerConfig()) return new Response(null, { status: 404 });
+    if (!getMixologySupabaseConfig()) return new Response(null, { status: 404 });
     const url = new URL(request.url);
     const type = parseType(url.searchParams.get("type"));
     const id = cleanText(url.searchParams.get("id"), 160);
     if (!type || !id) return new Response(null, { status: 400 });
     const table = type === "material" ? "mixology_items" : "mixology_recipes";
-    const result = await supabaseRestFetch<CoverRow[]>(
-      `${table}?id=eq.${encodeSupabaseFilter(id)}&deleted_at=is.null&select=cover&limit=1`,
+    const result = await mixologyRestFetch<CoverRow[]>(
+      `${table}?id=eq.${encodeMixologyFilter(id)}&deleted_at=is.null&select=cover&limit=1`,
     );
     if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
     const cover = cleanText(result.data[0]?.cover, 3_000_000);
@@ -77,6 +77,6 @@ export async function GET(request: Request) {
       },
     });
   } catch (err) {
-    return NextResponse.json({ ok: false, error: formatSupabaseRestError(err) }, { status: 500 });
+    return NextResponse.json({ ok: false, error: formatMixologyError(err) }, { status: 500 });
   }
 }

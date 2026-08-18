@@ -11,7 +11,7 @@ import { getMixMaterial, getMixSession, listMixPickables, resolveMixRecipeMateri
 import { applyMixMacros, MIX_DEFAULT_USER_NAME } from "@/lib/mixology/assembler";
 import { buildMixConditionContext, pickActiveMixMaterials } from "@/lib/mixology/state";
 import { scopeMixCss } from "@/lib/mixology/css-scope";
-import { MIX_KIND_LABELS, MIX_SLOT_ORDER, mixEncoreRenderHtml, mixSlotEntries, type MixCharacterCard, type MixFilterRule, type MixMaterialKind, type MixMechanismMaterial, type MixSession, type MixSlotEntry, type MixState, type MixTurn } from "@/lib/mixology/types";
+import { MIX_KIND_LABELS, MIX_SLOT_ORDER, mixEncoreRenderHtml, mixPanelLayoutOf, mixSlotEntries, type MixCharacterCard, type MixFilterRule, type MixMaterialKind, type MixMechanismMaterial, type MixPanelLayout, type MixSession, type MixSlotEntry, type MixState, type MixTurn } from "@/lib/mixology/types";
 import { applyMixFilterRules } from "@/lib/mixology/prose";
 import { MixProseView } from "./prose-view";
 import { MixRichText } from "./rich-text";
@@ -188,17 +188,51 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
     }, [session]);
 
     /**
-     * 条件命中、且配了停靠位的机括：这些是要常驻在画面边上的界面。
-     * 上限 3 件——每件一个 iframe，手机上多开吃内存，屏幕也摆不下。
+     * 条件命中、且写了界面的机括：这些是要常驻在对局画面上的界面。
+     * 上限 3 件——每件一个 iframe，手机上多开吃内存。
+     * 摆放取材料自己写的那份；玩家在这一局里拖动过的，以拖过的为准。
      */
     const panels = useMemo(() => {
-        if (!session) return [] as MixMechanismMaterial[];
+        if (!session) return [] as { material: MixMechanismMaterial; layout: MixPanelLayout }[];
         const { entries } = resolveMixRecipeMaterials(session.recipe);
         const active = pickActiveMixMaterials(entries, buildMixConditionContext(session));
         return (active.mechanism ?? [])
-            .filter((m): m is MixMechanismMaterial => m.kind === "mechanism" && Boolean(m.dock) && Boolean(m.panelHtml?.trim()))
+            .filter((m): m is MixMechanismMaterial => m.kind === "mechanism" && Boolean(m.panelHtml?.trim()))
+            .map((material) => {
+                const base = mixPanelLayoutOf(material);
+                if (!base) return null;
+                const moved = session.panelBox?.[material.id];
+                return { material, layout: moved ? { ...base, ...moved } : base };
+            })
+            .filter((item): item is { material: MixMechanismMaterial; layout: MixPanelLayout } => item !== null)
             .slice(0, MIX_PANEL_MAX);
     }, [session]);
+
+    /**
+     * 机括界面的逃生口。摆放完全交给创作者之后，理论上存在"一块面板糊满整个屏幕、
+     * 连输入框都点不到"的材料——不靠限制排版来防，靠这里一键收掉、一键归位。
+     */
+    const [panelsHidden, setPanelsHidden] = useState(false);
+
+    /** 把这一局里拖过的摆放全部丢掉，退回材料自己写的那份 */
+    const resetPanelBoxes = useCallback(() => {
+        const current = getMixSession(sessionId);
+        if (!current?.panelBox) return;
+        const next = { ...current };
+        delete next.panelBox;
+        saveMixSession(next);
+        setSession(getMixSession(sessionId));
+    }, [sessionId]);
+
+    /** 玩家把面板拖过/拉过之后记在这一局里，不回写材料 */
+    const handlePanelBox = useCallback((materialId: string, box: { x: number; y: number; w: number; h: number }) => {
+        const current = getMixSession(sessionId);
+        if (!current) return;
+        const previous = current.panelBox?.[materialId];
+        if (previous && previous.x === box.x && previous.y === box.y && previous.w === box.w && previous.h === box.h) return;
+        saveMixSession({ ...current, panelBox: { ...(current.panelBox ?? {}), [materialId]: { ...(previous ?? {}), ...box } } });
+        setSession(getMixSession(sessionId));
+    }, [sessionId]);
 
     /** 界面写自己的存储 */
     const handlePanelStore = useCallback((materialId: string, store: Record<string, string>) => {
@@ -237,21 +271,44 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         el.scrollTop = stickRef.current === "top" ? 0 : el.scrollHeight;
     }, []);
 
-    /** 这一局有没有人开过口——只有开场白的局算「还没开始」 */
-    const chatted = useMemo(() => (session?.turns ?? []).some((turn) => turn.role === "user"), [session?.turns]);
-
+    /**
+     * 进对局定一次落点：没人开过口的局停在扉页顶上（开场画布要从头看），聊过的停在最新一条上。
+     * 只认 sessionId——定完就撒手，后面翻页（free）和发言（bottom）都能改它，这里不再回头覆盖。
+     * 以前这个 effect 还挂着 busy 和 turns.length：一发言 busy 先翻 true，而用户那一轮要等
+     * 落杯前钩子跑完才落库，这一拍读到的还是「没人开过口」，于是把人拽回了扉页顶上。
+     */
     useEffect(() => {
-        stickRef.current = chatted ? "bottom" : "top";
+        const entered = getMixSession(sessionId);
+        stickRef.current = (entered?.turns ?? []).some((turn) => turn.role === "user") ? "bottom" : "top";
         applyStick();
-    }, [sessionId, chatted, session?.turns.length, busy, applyStick]);
+    }, [sessionId, applyStick]);
+
+    /** 内容长高了（新一轮到达、生成态切换）按当前落点再落一次 */
+    useEffect(() => {
+        applyStick();
+    }, [session?.turns.length, busy, applyStick]);
 
     /**
-     * 开场画布是沙盒 iframe，高度由画布自己异步报上来：挂载那一刻它还只有几十像素，
-     * 等它撑到几千像素，下面的内容整体被推下去。Chrome 有 scroll anchoring 会自己补偿，
-     * iOS Safari 没有这个特性，滚动位置原地不动，于是就停在画布中间——既不贴顶也不贴底。
-     * 所以画布报完高度要再落一次。
+     * 滚动区里的沙盒 iframe——开场画布、每轮的小票与小剧场、末尾的静态小品——高度都是
+     * 里面量好再 postMessage 报上来的：挂载那一刻它们只有几十像素，等报上真实高度，
+     * 下面的内容整体被推下去。Chrome 有 scroll anchoring 会自己补偿，iOS Safari 没有，
+     * 滚动位置原地不动，于是就停在中间——既不贴顶也不贴底。
+     *
+     * 这里直接听两种画布的高度消息，比给每个组件挂 onHeight 稳：
+     * 一是小票/小剧场那几个框本来就没有回调，二是 RichFrame 的 onHeight 是在 setHeight
+     * 之后同步调的，那一刻新高度还没提交进 DOM，落点会按旧的 scrollHeight 算，等于白落。
+     * 隔两帧再落，确保 React 提交完、浏览器也重新布局过。
      */
-    const handleCanvasHeight = useCallback(() => { applyStick(); }, [applyStick]);
+    useEffect(() => {
+        const onFrameResize = (event: MessageEvent) => {
+            const data = event.data as Record<string, unknown> | null;
+            if (!data || data.type !== "resize") return;
+            if (data.source !== "mix-rich-frame" && data.source !== "mix-ticket-frame") return;
+            requestAnimationFrame(() => requestAnimationFrame(applyStick));
+        };
+        window.addEventListener("message", onFrameResize);
+        return () => window.removeEventListener("message", onFrameResize);
+    }, [applyStick]);
 
     /** 用户自己翻页了就撒手，别在画布撑高时把他拽回去 */
     const handleScroll = useCallback(() => {
@@ -301,21 +358,22 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         );
     }
 
-    const run = async (action: (signal: AbortSignal) => Promise<unknown>) => {
+    const run = async (action: (signal: AbortSignal, commit: () => void) => Promise<unknown>) => {
         if (busy) return;
         const controller = new AbortController();
         abortRef.current = controller;
         setBusy(true);
         busyRef.current = true;
+        const commit = () => setSession(getMixSession(sessionId));
         try {
-            const pending = action(controller.signal);
-            // 引擎的同步部分已经落库（重说删掉旧轮 / 发送写入用户消息），
-            // 立刻回读让界面先变，不等模型回来才一起刷
-            setSession(getMixSession(sessionId));
+            const pending = action(controller.signal, commit);
+            // 重说/回溯那几条在第一个 await 之前就落库了，立刻回读让界面先变；
+            // 发送那条的落库晚于这一拍（落杯前钩子是异步的），由引擎回调 commit 补上
+            commit();
             await pending;
-            setSession(getMixSession(sessionId));
+            commit();
         } catch (error) {
-            setSession(getMixSession(sessionId));
+            commit();
             const message = error instanceof Error ? error.message : "生成失败，请重试。";
             if (!controller.signal.aborted) onToast(message);
         } finally {
@@ -328,13 +386,17 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
         const text = input.trim();
         if (!text) return;
         setInput("");
-        void run((signal) => generateMixReply(sessionId, text, signal));
+        // 一开口就把落点钉到底：用户那一轮要等落杯前钩子跑完才落库，
+        // 这中间界面还是「没人开过口」的样子，不钉住就会被拽回扉页顶上
+        stickRef.current = "bottom";
+        void run((signal, commit) => generateMixReply(sessionId, text, signal, commit));
     };
 
     /** 界面以玩家身份发一句话：走的是和输入框一模一样的路径，不是特权通道 */
     const handlePanelSay = useCallback((text: string) => {
         if (busyRef.current) return;
-        void run((signal) => generateMixReply(sessionId, text, signal));
+        stickRef.current = "bottom";
+        void run((signal, commit) => generateMixReply(sessionId, text, signal, commit));
     }, [sessionId]);
 
     const copyTurn = (turn: MixTurn) => {
@@ -416,7 +478,7 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
             <div className="mix-game-scroll" ref={scrollRef} onScroll={handleScroll}>
                 {assets.canvasHtml ? (
                     <div className="mix-game-canvas">
-                        <MixRichText text={assets.canvasHtml} onHeight={handleCanvasHeight} />
+                        <MixRichText text={assets.canvasHtml} />
                     </div>
                 ) : null}
                 {session.turns.map((turn, idx) => {
@@ -455,20 +517,21 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                     </div>
                 ) : null}
             </div>
-            {panels.length ? (
+            {panels.length && !panelsHidden ? (
                 <div className="mix-panel-layer">
-                    {panels.map((material) => (
+                    {panels.map(({ material, layout }) => (
                         <MixMechanismPanel
                             key={material.id}
                             materialId={material.id}
                             name={material.name}
-                            dock={material.dock!}
+                            layout={layout}
                             html={material.panelHtml ?? ""}
                             state={session.state ?? {}}
                             store={session.mechanismStore?.[material.id] ?? {}}
                             onStore={handlePanelStore}
                             onState={handlePanelState}
                             onSay={handlePanelSay}
+                            onBox={handlePanelBox}
                         />
                     ))}
                 </div>
@@ -523,6 +586,16 @@ export function MixologyGame({ sessionId, onBack, onToast }: GameProps) {
                         </div>
                         <div className="mix-sheet-body">
                             <div className="mix-struct-note">只改这一局，下一轮生成时生效，已写出的内容不变；不影响吧台里保存的方案。</div>
+                            {panels.length ? (
+                                <div className="mix-panel-ops">
+                                    <button type="button" className="mix-dock-chip" data-on={panelsHidden ? "true" : undefined} onClick={() => setPanelsHidden((v) => !v)}>
+                                        {panelsHidden ? "显示机括界面" : "暂时收起机括界面"}
+                                    </button>
+                                    <button type="button" className="mix-dock-chip" onClick={() => { resetPanelBoxes(); onToast("机括界面已归位。"); }}>
+                                        界面归位
+                                    </button>
+                                </div>
+                            ) : null}
                             <div className="mix-bar-hint">左右滑动切换槽位 · 点击槽位换材料</div>
                             <div className="mix-wheel" ref={wheelRef} onScroll={handleWheelScroll}>
                                 {MIX_SLOT_ORDER.map((kind) => {

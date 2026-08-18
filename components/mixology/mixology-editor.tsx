@@ -3,7 +3,7 @@
 // 独家特调 · 材料编辑器：八类材料的自建/编辑表单（底部弹层里渲染）。
 // Phase ③ 先给够用的表单闭环，创作工坊阶段再上专业编辑体验。
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FileText, Plus, Trash2 } from "lucide-react";
 import type {
     MixCharacterCard,
@@ -13,8 +13,8 @@ import type {
     MixTextMaterial,
     MixTicketVar,
 } from "@/lib/mixology/types";
-import { createMixId, formatMixTags, MIX_DOCK_LABELS, MIX_KIND_LABELS, MIX_TAG_MAX, mixKindHasCover, parseMixTags } from "@/lib/mixology/types";
-import type { MixDock } from "@/lib/mixology/types";
+import { createMixId, formatMixTags, MIX_DOCK_LABELS, MIX_DOCK_PRESETS, MIX_KIND_LABELS, MIX_PANEL_KEEP_IN, MIX_PANEL_MIN_H, MIX_PANEL_MIN_W, MIX_TAG_MAX, mixKindHasCover, mixNearestDock, mixPanelLayoutOf, parseMixTags } from "@/lib/mixology/types";
+import type { MixDock, MixPanelLayout } from "@/lib/mixology/types";
 import { applyMixFilterRules } from "@/lib/mixology/prose";
 import { MixPreviewInline, MixStructureSheet } from "./mixology-preview";
 
@@ -24,49 +24,57 @@ const OPENING_SEPARATOR = "\n---\n";
 const KIND_GUIDE: Record<MixMaterialKind, { what: string; where: string }> = {
     character: {
         what: "这里写角色资料：身份、外貌、性格、所处世界、与玩家的初始关系，以及开场白与示例对话。",
-        where: "拆分为「角色资料」「世界与剧情」「示例对话」三段进入提示词。",
+        where: "进入「角色资料」「世界与剧情」「示例对话」三段。",
     },
     persona: {
-        what: "这里写用户人设：{{user}} 是谁——身份、性格、外貌，以及与{{char}}关系中用户一侧的设定；可另填一个代入名替换全部 {{user}}。",
-        where: "进入提示词「用户资料」段，位于「角色资料」之后；代入名会替换提示词中所有 {{user}}。",
+        what: "这里写用户人设：{{user}} 是谁——身份、性格、外貌，以及与{{char}}之间那段关系里你这一侧的设定。",
+        where: "进入「用户资料」段；填了名字就替换全部 {{user}}。",
     },
     base: {
         what: "这里写扮演总纲：如何入戏、能否代替玩家发言、是否允许冲突与负面情绪。约束态度，不涉及文笔。",
-        where: "进入提示词首段「扮演总纲」。",
+        where: "进入提示词首段。",
     },
     flavor: {
         what: "这里写文风：句式长短、叙述视角、侧重动作还是心理。仅约束写法，不承载角色设定。",
-        where: "进入提示词「文风」段。",
+        where: "进入「文风」段。",
     },
     glass: {
         what: "这里写正文输出要求：每轮的段落数量、叙述节奏与收笔方式。正文标记规则（「」对白、* * 心声、【】场景、~ ~ 强调）由系统内置在本段开头，不必重复写。",
-        where: "进入提示词「正文输出要求」段，接在内置标记规则之后。",
+        where: "接在内置的正文标记规则之后。",
     },
     strength: {
         what: "这里写最高优先级要求：一到两条最需要被贯彻的规则。因排在全部对话之后、生成之前，模型对其服从度最高；条目越多越互相稀释。",
-        where: "进入对话历史之后的「最高优先级要求」段，十味中仅此一味在此位置。",
+        where: "排在全部对话之后、生成之前，模型最难忽略。",
     },
     ticket: {
         what: "这里写状态栏：每轮附带的一张数据卡，好感度、当前心情、随身物品等由创作者自定。契约决定模型报告什么，渲染代码决定卡片如何呈现。",
-        where: "契约进入提示词「状态栏」段；渲染代码不进入提示词，仅在界面中执行。",
+        where: "契约进提示词；渲染代码只在界面执行。",
     },
     garnish: {
         what: "这里写界面样式：正文配色、对白字体、气泡形态，以 CSS 编写。写 body / html / :root 等同于「整个对局画面」。",
-        where: "不进入提示词，仅改变呈现，不占用上下文。样式只在对局画面内生效，改不到应用的其他页面。",
+        where: "不进提示词，只改呈现，不占上下文。",
     },
     encore: {
-        what: "这里写小剧场：正文之外的加演，例如旁观视角、朋友圈动态、一段监控录像。输出契约决定 AI 何时写什么，渲染代码决定它长什么样；契约留空则为纯静态小品（手账、排班表）。",
-        where: "契约进入提示词「小剧场」段；渲染代码不进提示词，仅在界面中执行。",
+        what: "这里写小剧场：正文之外的加演，例如朋友圈动态、一段监控录像。契约决定 AI 何时写什么，渲染代码决定它长什么样；契约留空则为纯静态小品。",
+        where: "契约进提示词；渲染代码只在界面执行。",
     },
     mechanism: {
-        what: "这里写机括：一段在沙盒里跑的逻辑，和一块常驻在对局画面边上的界面。两半通常配合着写——它们共用同一份存储，能互相看见（界面上记的东西，钩子发送前能用上）；只写其中一半也可以。逻辑在固定的几个时机被叫起来——开局、发送前、收到回复后、退出对局——每次收到一份数据包，加工完还回去。",
-        where: "不进入提示词。跑在没有网络、碰不到应用本体的沙盒里，超时会被掐断，那一轮当作没有机括。",
+        what: "一段在沙盒里跑的逻辑，加一块常驻在对局画面上的界面。两半共用同一份存储，可以只写一半。",
+        where: "不进提示词，跑在断网的沙盒里。",
     },
     filter: {
-        what: "这里写滤网：一组正则替换规则，自动清洗 AI 正文里的怪癖（markdown 残留、口癖词、错标点）。每条规则可选「仅显示」（存原文，只在渲染时替换，改规则全部历史立即生效）或「进上下文」（入库前清洗，发回模型的历史也是洗过的，只对新回复生效）。",
-        where: "不进入提示词。在状态栏/小剧场拆分之后执行，只作用于正文，不会碰坏数据块。",
+        what: "这里写滤网：一组正则替换规则，自动清洗 AI 正文里的怪癖。每条可选「仅显示」（只在渲染时替换，改规则对全部历史立即生效）或「进上下文」（入库前清洗，只对新回复生效）。",
+        where: "不进提示词，只清洗正文。",
     },
 };
+
+/**
+ * 作者要在框里再分小标题时该用哪一级。
+ * 应用自己占了 # 与 ##（段标题与框标题），三级往下全留给作者。
+ * 不进提示词的几种材料（外观/机括/滤网）不显示这行。
+ */
+const HEADING_NOTE = "要在框里加小标题，用 ### 开头（# 和 ## 已被应用占用）。";
+const HEADING_NOTE_KINDS: MixMaterialKind[] = ["character", "persona", "base", "flavor", "glass", "strength", "ticket", "encore"];
 
 /** 文本类材料（基底/风味/杯型/苦精）的字段名与示例 */
 const TEXT_FIELD_COPY: Record<"base" | "flavor" | "glass" | "strength", { label: string; placeholder: string }> = {
@@ -119,6 +127,116 @@ type EditorProps = {
     onCancel: () => void;
 };
 
+/**
+ * 界面摆放的可视化摆放器：一块按对局画面比例画的板子，里面那个框就是面板。
+ * 拖框挪位置、拖右下角改大小，下面几个开关管交互与外壳。
+ * 数值也一起显示——照着别人的材料抄坐标时看得见。
+ */
+function MixLayoutPicker({ layout, onChange }: { layout: MixPanelLayout; onChange: (next: MixPanelLayout) => void }) {
+    const boardRef = useRef<HTMLDivElement | null>(null);
+    const dragRef = useRef<{ mode: "move" | "size"; from: { x: number; y: number }; box: MixPanelLayout } | null>(null);
+    const [dragging, setDragging] = useState(false);
+
+    const clamp = useCallback((next: MixPanelLayout): MixPanelLayout => {
+        const w = Math.round(Math.min(100, Math.max(MIX_PANEL_MIN_W, next.w)));
+        const h = Math.round(Math.min(100, Math.max(MIX_PANEL_MIN_H, next.h)));
+        return {
+            ...next,
+            w,
+            h,
+            x: Math.round(Math.min(100 - MIX_PANEL_KEEP_IN, Math.max(MIX_PANEL_KEEP_IN - w, next.x))),
+            y: Math.round(Math.min(100 - MIX_PANEL_KEEP_IN, Math.max(MIX_PANEL_KEEP_IN - h, next.y))),
+        };
+    }, []);
+
+    const start = (mode: "move" | "size") => (event: React.PointerEvent) => {
+        if (event.button !== 0) return;
+        event.stopPropagation();
+        dragRef.current = { mode, from: { x: event.clientX, y: event.clientY }, box: layout };
+        setDragging(true);
+    };
+
+    useEffect(() => {
+        if (!dragging) return;
+        const rect = boardRef.current?.getBoundingClientRect();
+        if (!rect?.width || !rect.height) { setDragging(false); return; }
+        const move = (event: PointerEvent) => {
+            const drag = dragRef.current;
+            if (!drag) return;
+            const dx = (event.clientX - drag.from.x) / rect.width * 100;
+            const dy = (event.clientY - drag.from.y) / rect.height * 100;
+            onChange(clamp(drag.mode === "move"
+                ? { ...drag.box, x: drag.box.x + dx, y: drag.box.y + dy }
+                : { ...drag.box, w: drag.box.w + dx, h: drag.box.h + dy }));
+        };
+        const stop = () => { dragRef.current = null; setDragging(false); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", stop);
+        window.addEventListener("pointercancel", stop);
+        return () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", stop);
+            window.removeEventListener("pointercancel", stop);
+        };
+    }, [dragging, onChange, clamp]);
+
+    const toggles: { key: keyof MixPanelLayout; label: string; on: boolean; hint: string }[] = [
+        { key: "drag", label: "玩家可拖动", on: layout.drag !== false, hint: "拖过的位置只记在那一局里" },
+        { key: "resize", label: "玩家可缩放", on: layout.resize === true, hint: "右下角出现缩放把手" },
+        { key: "autoHeight", label: "高度随内容", on: layout.autoHeight === true, hint: "上面画的高度变成上限" },
+        { key: "chrome", label: "应用画标题条", on: (layout.chrome ?? "bar") === "bar", hint: "带名字和收起箭头的那条" },
+        { key: "plate", label: "应用画底板", on: layout.plate !== false, hint: "圆角暗底与描边" },
+    ];
+
+    return (
+        <Field label="画在哪" hint="拖框挪位置，拖右下角改大小">
+            <div className="mix-layout-pick">
+                <div className="mix-layout-board" ref={boardRef}>
+                    <div className="mix-layout-bar">标题栏</div>
+                    <div className="mix-layout-input">输入栏</div>
+                    <div
+                        className="mix-layout-box"
+                        style={{ left: `${layout.x}%`, top: `${layout.y}%`, width: `${layout.w}%`, height: `${layout.h}%` }}
+                        onPointerDown={start("move")}
+                    >
+                        <span>{layout.w}×{layout.autoHeight ? "自动" : layout.h}</span>
+                        <i className="mix-layout-grip" onPointerDown={start("size")} />
+                    </div>
+                </div>
+                <div className="mix-layout-side">
+                    <div className="mix-layout-nums">左 {layout.x}% · 上 {layout.y}%</div>
+                    {toggles.map((item) => (
+                        <button
+                            type="button"
+                            className="mix-dock-chip"
+                            key={item.key}
+                            data-on={item.on ? "true" : undefined}
+                            title={item.hint}
+                            onClick={() => {
+                                if (item.key === "chrome") onChange({ ...layout, chrome: item.on ? "none" : "bar" });
+                                else if (item.key === "plate") onChange({ ...layout, plate: !item.on });
+                                else onChange({ ...layout, [item.key]: !item.on });
+                            }}
+                        >
+                            {item.label}
+                        </button>
+                    ))}
+                    <label className="mix-layout-z">
+                        叠放次序
+                        <input
+                            type="number"
+                            min={0}
+                            max={9}
+                            value={layout.z ?? 0}
+                            onChange={(e) => onChange({ ...layout, z: Math.min(9, Math.max(0, Number(e.target.value) || 0)) })}
+                        />
+                    </label>
+                </div>
+            </div>
+        </Field>
+    );
+}
+
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
     return (
         <>
@@ -164,7 +282,9 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
     const [previewRaw, setPreviewRaw] = useState(initial?.kind === "ticket" ? initial.previewRaw ?? "" : "");
     const [vars, setVars] = useState<MixTicketVar[]>(initial?.kind === "ticket" ? initial.vars ?? [] : []);
     const [script, setScript] = useState(initial?.kind === "mechanism" ? initial.script ?? "" : "");
-    const [dock, setDock] = useState<MixDock | "">(initial?.kind === "mechanism" ? initial.dock ?? "" : "");
+    const [layout, setLayout] = useState<MixPanelLayout | null>(
+        initial?.kind === "mechanism" ? mixPanelLayoutOf(initial) ?? null : null,
+    );
     const [panelHtml, setPanelHtml] = useState(initial?.kind === "mechanism" ? initial.panelHtml ?? "" : "");
 
     /**
@@ -285,7 +405,10 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                 ...meta,
                 kind: "mechanism",
                 script: script.trim() || undefined,
-                dock: dock || undefined,
+                layout: layout ?? undefined,
+                // 顺带写上最接近的老停靠位：老版本客户端不认 layout，
+                // 有这一条至少还能把界面挂在个大致对的地方，而不是干脆不显示
+                dock: layout ? mixNearestDock(layout) : undefined,
                 panelHtml: panelHtml.trim() || undefined,
             });
             return;
@@ -350,8 +473,10 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             <div className="mix-guide">
                 <div className="mix-guide-what">{guide.what}</div>
                 <div className="mix-guide-where">{guide.where}</div>
+                {HEADING_NOTE_KINDS.includes(kind) ? <div className="mix-guide-level">{HEADING_NOTE}</div> : null}
                 <button type="button" className="mix-guide-link" onClick={() => setStructureOpen(true)}>
-                    <FileText size={12} style={{ verticalAlign: "-2px" }} /> 看看完整提示词结构
+                    <FileText size={12} />
+                    <span>看看完整提示词结构</span>
                 </button>
             </div>
             <Field label={isCharacter ? "角色名" : "名称"} hint="必填">
@@ -410,7 +535,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                     <Field label="外貌"><textarea className="mix-textarea" value={appearance} onChange={(e) => setAppearance(e.target.value)} placeholder="例：高瘦，总把制服外套袖子卷到手肘，左耳有个旧耳洞" /></Field>
                     <Field label="背景"><textarea className="mix-textarea" value={background} onChange={(e) => setBackground(e.target.value)} placeholder="例：三年前从老家搬来，白天在读夜校，夜班是为了付学费" /></Field>
                     <Field label="世界观"><textarea className="mix-textarea" value={worldview} onChange={(e) => setWorldview(e.target.value)} placeholder="故事发生在什么世界。例：普通现代都市，没有超自然设定" /></Field>
-                    <Field label="对用户的初始认知"><textarea className="mix-textarea" value={cognition} onChange={(e) => setCognition(e.target.value)} placeholder="开局时角色对你了解到什么程度。例：只知道你是每周来三次的常客，不知道名字" /></Field>
+                    <Field label={"对{{user}}的初始认知"}><textarea className="mix-textarea" value={cognition} onChange={(e) => setCognition(e.target.value)} placeholder="开局时角色对你了解到什么程度。例：只知道你是每周来三次的常客，不知道名字" /></Field>
                     <Field label="关系与身份"><textarea className="mix-textarea" value={relations} onChange={(e) => setRelations(e.target.value)} placeholder="玩家可以代入哪些身份、各自什么关系。例：熟客（微妙的默契）/ 新同事（他带你）" /></Field>
                     <Field label="当前剧情"><textarea className="mix-textarea" value={plot} onChange={(e) => setPlot(e.target.value)} placeholder="故事从哪一刻开始。例：雨夜，打烊前十分钟，店里只剩你们两个" /></Field>
                     <Field label="附加设定"><textarea className="mix-textarea" value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="配角、私设名词、地点等。例：店长老周只在白班出现；「三号柜」是他们之间的暗号" /></Field>
@@ -487,7 +612,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ) : null}
             {kind === "persona" ? (
                 <>
-                    <Field label="代入名" hint="选填，替换提示词里的 {{user}}；留空则用「你」">
+                    <Field label="你的名字" hint="选填，角色会这么称呼你；留空则用「你」">
                         <input className="mix-input" value={personaUserName} onChange={(e) => setPersonaUserName(e.target.value)} placeholder="例：阿澈" />
                     </Field>
                     <Field label="用户人设" hint="必填，可用 {{char}} / {{user}}">
@@ -607,7 +732,7 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
             ) : null}
             {kind === "mechanism" ? (
                 <>
-                    <Field label="钩子逻辑" hint="可留空。定义下面这几个函数，会在对应时机被调用；ctx.store 与下面的界面是同一份">
+                    <Field label="钩子逻辑" hint="可留空。存储与下面的界面共用一份">
                         <textarea
                             className="mix-textarea"
                             data-code="true"
@@ -617,23 +742,24 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                             placeholder={"每个函数收一份 ctx，返回一个对象（不返回就是什么都不改）。\nctx: { turnCount, state, store, charName, userName, text, ticketRaw, encoreRaw }\n可返回: { text, note, state, store }\n\n例：玩家打「/掷骰」时换成一段带结果的指令\nfunction onBeforeSend(ctx) {\n  if (ctx.text !== \"/掷骰\") return;\n  var n = 1 + Math.floor(Math.random() * 20);\n  return { text: \"（我掷出了 \" + n + \" 点）\" };\n}\n\n例：连着三轮好感度上涨就提醒一次\nfunction onAfterReply(ctx) {\n  var up = Number(ctx.store.连涨 || 0);\n  return { store: { 连涨: String(up + 1) } };\n}"}
                         />
                     </Field>
-                    <Field label="常驻界面" hint="可留空。选一个停靠位，界面会一直挂在对局画面边上；它写的存储上面的钩子读得到">
+                    <Field label="常驻界面" hint="可留空">
                         <div className="mix-dock-row">
-                            <button type="button" className="mix-dock-chip" data-on={dock === "" ? "true" : undefined} onClick={() => setDock("")}>不要界面</button>
+                            <button type="button" className="mix-dock-chip" data-on={layout ? undefined : "true"} onClick={() => setLayout(null)}>不要界面</button>
                             {(Object.keys(MIX_DOCK_LABELS) as MixDock[]).map((value) => (
                                 <button
                                     type="button"
                                     className="mix-dock-chip"
-                                    data-on={dock === value ? "true" : undefined}
                                     key={value}
-                                    onClick={() => setDock(value)}
+                                    onClick={() => setLayout({ ...MIX_DOCK_PRESETS[value] })}
                                 >
                                     {MIX_DOCK_LABELS[value]}
                                 </button>
                             ))}
+                            <button type="button" className="mix-dock-chip" onClick={() => setLayout({ x: 0, y: 0, w: 100, h: 100, drag: false, chrome: "none", plate: false })}>整屏</button>
                         </div>
                     </Field>
-                    {dock ? (
+                    {layout ? <MixLayoutPicker layout={layout} onChange={setLayout} /> : null}
+                    {layout ? (
                         <Field label="界面代码" hint="HTML + CSS + JS，在沙盒里跑">
                             <textarea
                                 className="mix-textarea"
@@ -641,14 +767,23 @@ export function MixMaterialEditor({ kind, initial, onSave, onCancel }: EditorPro
                                 style={{ minHeight: 160 }}
                                 value={panelHtml}
                                 onChange={(e) => setPanelHtml(e.target.value)}
-                                placeholder={"例：\n<div style=\"padding:10px;color:#d9b06a\">这里是常驻面板</div>"}
+                                placeholder={"<div style=\"padding:10px\">这里是常驻面板</div>\n\nwindow.mix\n  setStore(obj) / setState(obj)   写存储 / 写记住的值\n  say(text)                       以玩家身份说一句\n  open() / close()                展开、收起\n  move(x, y) / size(w, h)         挪自己、改大小（百分比）\n  fit(px)                         报内容多高\n  grab()                          在自己画的标题条上按下时调\nwindow.MIX_STATE / window.MIX_STORE  当前的值\nwindow.onMixSync(state, store)       值变了会回调"}
                             />
                         </Field>
                     ) : null}
+                    <MixPreviewInline
+                        label="试摆一下"
+                        target={{
+                            kind: "mechanism",
+                            name,
+                            html: panelHtml,
+                            layout: layout ?? MIX_DOCK_PRESETS.float,
+                            script,
+                        }}
+                        disabled={!panelHtml.trim() && !script.trim()}
+                    />
                     <div className="mix-struct-note" style={{ marginTop: 10 }}>
-                        钩子跑在没有网络、碰不到应用本体的沙盒里，超时会被掐断，那一轮当作没有机括。
-                        存储是这件机括自己的，一个对局一份，退出再进来还在——钩子与界面共用这一份，
-                        所以「界面上记一笔、下一轮发送前带进提示词」这类配合是天然成立的。
+                        沙盒里没有网络，跑太久会被掐断。存储一个对局一份，退出再进来还在。
                     </div>
                 </>
             ) : null}
