@@ -84,6 +84,7 @@ import { extractTextToolDirectiveText } from "@/lib/text-tool-protocol";
 import { emitChatPluginEvent, getChatPluginHookBus, runChatPluginTransform } from "@/lib/chat-plugin-hooks";
 import { CHAT_PLUGIN_TOAST_EVENT, getChatPluginRuntime } from "@/lib/chat-plugin-runtime";
 import { ChatPluginSlot } from "@/components/chat/chat-plugin-slot";
+import { getStreamingReplyCount } from "@/lib/streaming-reply-count-config";
 
 // ── Call system message detection ──────────────────────────
 // Call messages are stored with user/assistant role for correct prompt alternation,
@@ -2771,6 +2772,41 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                 setMessages(prev => [...prev, aiMsg]);
             }
             return { hasVisible: false, stateValues, triggerCall, hasDecline };
+        }
+
+        // ── Enforce streaming reply count limit ──
+        // Merge excess text-only parts into the last allowed slot so total bubble count
+        // does not exceed the user-configured maximum.
+        const replyCountLimit = getStreamingReplyCount(session.id);
+        if (filteredParts.length > replyCountLimit) {
+            // Keep first (limit - 1) parts intact, merge the rest into the last slot
+            const keepCount = replyCountLimit - 1;
+            const kept = filteredParts.slice(0, keepCount);
+            const overflow = filteredParts.slice(keepCount);
+            // Merge overflow: rich-media parts stay separate (up to limit), text parts get concatenated
+            const mergedContent: string[] = [];
+            const mergedRich: typeof filteredParts = [];
+            for (const p of overflow) {
+                if (p.mediaType) {
+                    mergedRich.push(p);
+                } else {
+                    mergedContent.push(p.content);
+                }
+            }
+            // The merged text becomes one part
+            if (mergedContent.length > 0) {
+                kept.push({ content: mergedContent.join("\n\n") });
+            }
+            // Append any rich-media parts that couldn't be merged (they need their own bubbles)
+            kept.push(...mergedRich);
+            // Truncate to hard limit in case rich-media parts pushed us over
+            filteredParts.length = 0;
+            filteredParts.push(...kept.slice(0, replyCountLimit));
+            afterPublishEffects.length = 0;
+            // Rebuild afterPublishEffects to match new filteredParts length
+            for (let i = 0; i < filteredParts.length; i++) {
+                afterPublishEffects.push(undefined);
+            }
         }
 
         // Build rich-media drafts first, then publish them in the same order as the UI display.
