@@ -317,6 +317,12 @@ export type MixPanelLayout = {
     chrome?: "bar" | "none";
     /** 应用要不要画底板（圆角暗底、描边、投影）。自己画背景的关掉它 */
     plate?: boolean;
+    /**
+     * 按多宽来画（像素）。填了之后界面里的一切按这个宽度排版，应用再整体缩放到面板实际大小——
+     * 画一台 390 宽的手机、一张卡片时必须用它，否则同一份 CSS 在小面板里会挤成一团、
+     * 在大面板里又稀稀拉拉，预览与实际也对不上。不填则界面直接按面板的实际像素排版。
+     */
+    designWidth?: number;
     /** 同屏几件互相压时的次序，0–9 */
     z?: number;
     /** 开局时收起（只有 chrome 为 bar 时才有收起这回事） */
@@ -331,7 +337,7 @@ export const MIX_PANEL_MIN_H = 4;
 /** 层级上限：再高会压到应用自己的弹窗上面去 */
 export const MIX_PANEL_MAX_Z = 9;
 
-/** 四个老停靠位对应的摆放，同时也是编辑器里的起手式 */
+/** 四个老停靠位对应的摆放：只用来把老材料换算过来，编辑器里不再提供选择 */
 export const MIX_DOCK_PRESETS: Record<MixDock, MixPanelLayout> = {
     left: { x: 2, y: 12, w: 38, h: 52, drag: true, chrome: "bar", plate: true },
     right: { x: 60, y: 12, w: 38, h: 52, drag: true, chrome: "bar", plate: true },
@@ -363,17 +369,33 @@ export function normalizeMixPanelLayout(value: unknown): MixPanelLayout | undefi
     if (record.resize === true) layout.resize = true;
     layout.chrome = record.chrome === "none" ? "none" : "bar";
     layout.plate = record.plate !== false;
+    const design = clampNum(record.designWidth, 120, 1600, 0);
+    if (design) layout.designWidth = Math.round(design);
     const z = clampNum(record.z, 0, MIX_PANEL_MAX_Z, 0);
     if (z) layout.z = z;
     if (record.collapsed === true) layout.collapsed = true;
     return layout;
 }
 
-/** 一件机括最终按哪份摆放画：自己写了就用自己的，只有老停靠位就换算过来 */
-export function mixPanelLayoutOf(material: { layout?: MixPanelLayout; dock?: MixDock }): MixPanelLayout | undefined {
+/**
+ * 写了界面代码但没写摆放时用的起始值。
+ * 摆放是界面自己在代码里用 mix.move / mix.size / mix.chrome … 定的，
+ * 这里只是「代码还没跑起来的那一帧」站的地方：应用一笔都不画，位置给个中性的框。
+ */
+export const MIX_PANEL_DEFAULT_LAYOUT: MixPanelLayout = {
+    x: 6, y: 14, w: 88, h: 44, drag: true, chrome: "none", plate: false,
+};
+
+/**
+ * 一件机括最终按哪份摆放画。
+ * 自己写了就用自己的；只有老停靠位就换算过来；两样都没有但写了界面代码，
+ * 就落在中性的起始值上，等界面代码自己挪走——有界面代码就有界面，不再另外声明一次。
+ */
+export function mixPanelLayoutOf(material: { layout?: MixPanelLayout; dock?: MixDock; panelHtml?: string }): MixPanelLayout | undefined {
     const own = normalizeMixPanelLayout(material.layout);
     if (own) return own;
-    return material.dock ? { ...MIX_DOCK_PRESETS[material.dock] } : undefined;
+    if (material.dock) return { ...MIX_DOCK_PRESETS[material.dock] };
+    return material.panelHtml?.trim() ? { ...MIX_PANEL_DEFAULT_LAYOUT } : undefined;
 }
 
 /** 详情页上用一行字说清这份摆放 */
@@ -382,6 +404,7 @@ export function mixPanelLayoutSummary(layout: MixPanelLayout): string {
         `左 ${layout.x}% · 上 ${layout.y}%`,
         `${layout.w}% × ${layout.autoHeight ? "随内容" : `${layout.h}%`}`,
     ];
+    if (layout.designWidth) parts.push(`按 ${layout.designWidth}px 宽排版`);
     const flags: string[] = [];
     if (layout.drag !== false) flags.push("可拖动");
     if (layout.resize) flags.push("可缩放");
@@ -392,7 +415,7 @@ export function mixPanelLayoutSummary(layout: MixPanelLayout): string {
 }
 
 /**
- * 自由摆放换算回最接近的老停靠位。发布时一起写上去，
+ * 自由摆放换算回最接近的老停靠位。老材料改存时一起写上去，
  * 老版本客户端拿到这件机括时还能把它挂在个大致对的地方，而不是直接不显示。
  */
 export function mixNearestDock(layout: MixPanelLayout): MixDock {
@@ -414,7 +437,10 @@ export type MixMechanismMaterial = MixMaterialMeta & {
     script?: string;
     /** @deprecated 第一版的四个停靠位，只为认得出老材料而保留；新材料写 layout */
     dock?: MixDock;
-    /** 常驻界面画在哪、多大、能不能拖；不填也没有 dock 则这件机括没有界面 */
+    /**
+     * 常驻界面的起始摆放。新材料一般没有这个字段——画在哪、多大、要不要应用画外壳，
+     * 都在界面代码里用 mix.move / mix.size / mix.chrome … 写。有没有界面看 panelHtml。
+     */
     layout?: MixPanelLayout;
     /** 常驻界面的 HTML（含 CSS/JS），在沙盒 iframe 里跑 */
     panelHtml?: string;

@@ -2699,12 +2699,26 @@
     cursor: pointer;
 }
 
-.mix-panel-frame {
+/*
+ * 界面所在的那一块。iframe 绝对定位铺满它——作者填了「按多宽排版」时，
+ * iframe 会先按那个宽度铺开再整体缩回来，得有个固定的框把它裁住。
+ */
+.mix-panel-stage {
+    position: relative;
     flex: 1;
+    min-height: 0;
     width: 100%;
+    overflow: hidden;
+}
+
+.mix-panel-frame {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
     border: 0;
     background: transparent;
-    min-height: 0;
 }
 
 /* 右下角的缩放把手，只有摆放里开了 resize 才画 */
@@ -2749,13 +2763,30 @@
     margin: 8px 0 2px;
 }
 
+/* 正在写的那一段：与落库后的正文同一套排版，只在末尾加一个光标示意还没写完 */
+.mix-live-turn .mix-prose > :last-child::after {
+    content: "";
+    display: inline-block;
+    width: 2px;
+    height: 0.95em;
+    margin-left: 3px;
+    vertical-align: -0.12em;
+    background: var(--mix-violet);
+    animation: mixCaret 1s steps(1, end) infinite;
+}
+
+@keyframes mixCaret {
+    0%, 49% { opacity: 1; }
+    50%, 100% { opacity: 0; }
+}
+
 /* ── 编辑器里的机括试摆：一块按对局画面比例画的舞台，面板真的落在上面 ── */
 .mix-mech-stage {
     position: relative;
     margin-top: 8px;
     width: 100%;
-    aspect-ratio: 9 / 17;
-    max-height: 460px;
+    /* 长宽比在组件里按对局画面实测后写进内联样式，这里只兜个底 */
+    aspect-ratio: 9 / 19.5;
     border-radius: 14px;
     border: 1px solid var(--mix-line);
     background: linear-gradient(160deg, #231d33, #100e18 55%, #0a0910);
@@ -2816,106 +2847,6 @@
     cursor: pointer;
 }
 
-/* ── 编辑器里的可视化摆放器：一块按对局画面比例画的板子 ── */
-.mix-layout-pick {
-    display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    margin-bottom: 10px;
-}
-
-.mix-layout-board {
-    position: relative;
-    flex: 0 0 auto;
-    width: 132px;
-    aspect-ratio: 9 / 19.5;
-    border-radius: 12px;
-    border: 1px solid var(--mix-line);
-    background: linear-gradient(160deg, #231d33, #100e18 55%, #0a0910);
-    overflow: hidden;
-    touch-action: none;
-}
-
-.mix-layout-bar,
-.mix-layout-input {
-    position: absolute;
-    left: 0;
-    right: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 8px;
-    color: rgba(242, 240, 247, 0.28);
-    background: rgba(11, 11, 16, 0.5);
-}
-
-.mix-layout-bar { top: 0; height: 11%; }
-.mix-layout-input { bottom: 0; height: 8%; }
-
-.mix-layout-box {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    background: rgba(141, 123, 245, 0.28);
-    border: 1px solid rgba(141, 123, 245, 0.75);
-    cursor: grab;
-    touch-action: none;
-}
-
-.mix-layout-box span {
-    font-size: 9px;
-    color: #dcd6ff;
-    pointer-events: none;
-}
-
-.mix-layout-grip {
-    position: absolute;
-    right: -4px;
-    bottom: -4px;
-    width: 13px;
-    height: 13px;
-    border-radius: 4px;
-    background: rgba(141, 123, 245, 0.95);
-    cursor: nwse-resize;
-    touch-action: none;
-}
-
-.mix-layout-side {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    align-content: flex-start;
-}
-
-.mix-layout-nums {
-    width: 100%;
-    font-size: 11px;
-    color: var(--mix-dim);
-}
-
-.mix-layout-z {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11px;
-    color: var(--mix-dim);
-}
-
-.mix-layout-z input {
-    width: 56px;
-    padding: 3px 6px;
-    border-radius: 8px;
-    border: 1px solid var(--mix-line);
-    background: rgba(0, 0, 0, 0.28);
-    color: var(--mix-text);
-    font-family: inherit;
-    font-size: 11px;
-}
 
 /* 带可执行逻辑的材料（机括）：列表与详情里都要显眼一点 */
 .mix-mat-badge[data-tone="code"] {
