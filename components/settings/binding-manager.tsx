@@ -62,6 +62,7 @@ import { hydrateKvDb } from "@/lib/kv-db";
 import type { UserIdentity } from "@/components/settings/user-identity";
 import { loadCharacters } from "@/lib/character-storage";
 import type { Character } from "@/lib/character-types";
+import { checkCharacterDuplicates, highlightOverlaps, type DuplicatePair } from "@/lib/duplicate-checker";
 
 type Level = "global" | "character" | "app";
 type SingleBindingField = "apiConfigId" | "voiceConfigId" | "presetId" | "userIdentityId";
@@ -988,6 +989,8 @@ export function BindingManager() {
                         {renderCharacterSlotCards()}
                     </section>
 
+                    <CharacterDuplicateBtn characterId={selectedCharId} characters={characters} worldBooks={worldBooks} config={config} />
+
                     <section className="flex flex-col gap-3">
                         <p className="settings-menu-section-title">App Bindings</p>
                         <div className="binding-app-grid">
@@ -1047,6 +1050,116 @@ export function BindingManager() {
                     </button>
                 </>
             )}
+        </div>
+    );
+}
+
+// ── 角色维度重复排查按钮 ──
+
+function CharacterDuplicateBtn({ characterId, characters, worldBooks, config }: {
+    characterId: string;
+    characters: Character[];
+    worldBooks: WorldBookConfig[];
+    config: BindingConfig;
+}) {
+    const [checking, setChecking] = useState(false);
+    const [results, setResults] = useState<DuplicatePair[] | null>(null);
+    const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+    const runCheck = () => {
+        setChecking(true);
+        setResults(null);
+        setExpandedIdx(null);
+        setTimeout(() => {
+            const char = characters.find(c => c.id === characterId);
+            if (!char) { setResults([]); setChecking(false); return; }
+
+            // 获取该角色绑定的世界书 ID
+            const binding = config.characterBindings.find(b => b.characterId === characterId);
+            const charWbIds = new Set<string>([
+                ...(config.globalDefaults.worldBookIds || []),
+                ...(binding?.defaults.worldBookIds || []),
+            ]);
+            const boundBooks = worldBooks.filter(wb => charWbIds.has(wb.id));
+
+            const pairs = checkCharacterDuplicates(char, boundBooks);
+            setResults(pairs);
+            setChecking(false);
+        }, 50);
+    };
+
+    return (
+        <>
+            <div className="flex justify-center">
+                <button
+                    type="button"
+                    onClick={runCheck}
+                    disabled={checking}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-4 text-xs font-semibold text-red-600 shadow-sm transition-all hover:bg-red-100 hover:shadow-md active:scale-95 disabled:opacity-50"
+                >
+                    {checking ? (
+                        <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
+                        </svg>
+                    ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                    )}
+                    <span>{checking ? "排查中..." : "排查角色卡与世界书重复"}</span>
+                </button>
+            </div>
+
+            {results !== null && (
+                <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setResults(null)}>
+                    <div className="w-[90%] max-w-[380px] max-h-[70vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-gray-900 m-0">角色重复排查</h3>
+                            <button onClick={() => setResults(null)} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-3">
+                            {results.length === 0 ? (
+                                <p className="text-center text-gray-500 text-xs py-8">角色卡与世界书之间未检测到高度重复 ✓</p>
+                            ) : (
+                                <div className="flex flex-col gap-2">
+                                    {results.map((pair, idx) => (
+                                        <div key={idx} className="border border-red-100 rounded-xl bg-red-50/30 overflow-hidden">
+                                            <button type="button" className="w-full p-3 text-left flex flex-col gap-1" onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}>
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-xs font-semibold text-red-700">重复率 {Math.round(pair.ratio * 100)}%</span>
+                                                    <span className="text-[10px] text-gray-400">{expandedIdx === idx ? "收起" : "展开"}</span>
+                                                </div>
+                                                <p className="text-[11px] text-gray-700 m-0 leading-relaxed">
+                                                    <strong>{pair.sourceA}</strong> 的「{pair.nameA}」
+                                                    <br />与 <strong>{pair.sourceB}</strong> 的「{pair.nameB}」
+                                                </p>
+                                            </button>
+                                            {expandedIdx === idx && (
+                                                <div className="px-3 pb-3 flex flex-col gap-2 border-t border-red-100 pt-2">
+                                                    <DupPreview label={`${pair.sourceA} · ${pair.nameA}`} content={pair.contentA} overlaps={pair.overlaps} />
+                                                    <DupPreview label={`${pair.sourceB} · ${pair.nameB}`} content={pair.contentB} overlaps={pair.overlaps} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
+    );
+}
+
+function DupPreview({ label, content, overlaps }: { label: string; content: string; overlaps: string[] }) {
+    return (
+        <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-500">{label}</span>
+            <div
+                className="text-[11px] text-gray-800 leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap break-all bg-white rounded-lg p-2 border border-gray-100"
+                dangerouslySetInnerHTML={{ __html: highlightOverlaps(content, overlaps) }}
+            />
         </div>
     );
 }

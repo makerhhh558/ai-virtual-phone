@@ -16,6 +16,7 @@ import { SettingsContext } from "../phone-settings-app";
 import { BottomSheet, ConfirmDialog, TextExpandModal } from "@/components/ui/modal";
 import { SwipeActionRow, useSwipeActions } from "@/components/ui/swipe-actions";
 import { notifyMascotPageContext } from "@/lib/mascot-events";
+import { checkWorldBookDuplicates, highlightOverlaps, type DuplicatePair } from "@/lib/duplicate-checker";
 
 export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {}) {
     const [books, setBooks] = useState<WorldBookConfig[]>([]);
@@ -494,6 +495,7 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                             </button>
                         </div>
                     ) : (
+                        <>
                         <div className="grid grid-cols-2 gap-3">
                             {books.map(book => (
                                 <div
@@ -527,6 +529,8 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                                 </div>
                             ))}
                         </div>
+                        <WorldBookDuplicateBtn books={books} />
+                        </>
                     )}
                 </>
             ) : (
@@ -929,6 +933,111 @@ export function WorldBookManager({ isActive = true }: { isActive?: boolean } = {
                     />
                 );
             })()}
+        </div>
+    );
+}
+
+// ── 世界书重复排查按钮 ──
+
+function WorldBookDuplicateBtn({ books }: { books: WorldBookConfig[] }) {
+    const [checking, setChecking] = useState(false);
+    const [results, setResults] = useState<DuplicatePair[] | null>(null);
+    const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+    const runCheck = () => {
+        setChecking(true);
+        setResults(null);
+        setExpandedIdx(null);
+        setTimeout(() => {
+            const pairs = checkWorldBookDuplicates(books);
+            setResults(pairs);
+            setChecking(false);
+        }, 50);
+    };
+
+    return (
+        <>
+            <div className="flex justify-center mt-3">
+                <button
+                    type="button"
+                    onClick={runCheck}
+                    disabled={checking}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-4 text-xs font-semibold text-red-600 shadow-sm transition-all hover:bg-red-100 hover:shadow-md active:scale-95 disabled:opacity-50"
+                >
+                    {checking ? (
+                        <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeDasharray="31.4 31.4" />
+                        </svg>
+                    ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                    )}
+                    <span>{checking ? "排查中..." : "重复内容排查"}</span>
+                </button>
+            </div>
+            {results !== null && <DuplicateResultModal results={results} expandedIdx={expandedIdx} setExpandedIdx={setExpandedIdx} onClose={() => setResults(null)} />}
+        </>
+    );
+}
+
+// ── 重复结果弹窗（共用） ──
+
+function DuplicateResultModal({ results, expandedIdx, setExpandedIdx, onClose }: {
+    results: DuplicatePair[];
+    expandedIdx: number | null;
+    setExpandedIdx: (v: number | null) => void;
+    onClose: () => void;
+}) {
+    return (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+            <div className="w-[90%] max-w-[380px] max-h-[70vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+                    <h3 className="text-sm font-bold text-gray-900 m-0">重复排查结果</h3>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3">
+                    {results.length === 0 ? (
+                        <p className="text-center text-gray-500 text-xs py-8">未检测到高度重复的条目 ✓</p>
+                    ) : (
+                        <div className="flex flex-col gap-2">
+                            {results.map((pair, idx) => (
+                                <div key={idx} className="border border-red-100 rounded-xl bg-red-50/30 overflow-hidden">
+                                    <button type="button" className="w-full p-3 text-left flex flex-col gap-1" onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-semibold text-red-700">重复率 {Math.round(pair.ratio * 100)}%</span>
+                                            <span className="text-[10px] text-gray-400">{expandedIdx === idx ? "收起" : "展开"}</span>
+                                        </div>
+                                        <p className="text-[11px] text-gray-700 m-0 leading-relaxed">
+                                            <strong>{pair.sourceA}</strong> 的「{pair.nameA}」
+                                            <br />与 <strong>{pair.sourceB}</strong> 的「{pair.nameB}」
+                                        </p>
+                                    </button>
+                                    {expandedIdx === idx && (
+                                        <div className="px-3 pb-3 flex flex-col gap-2 border-t border-red-100 pt-2">
+                                            <ContentPreview label={`${pair.sourceA} · ${pair.nameA}`} content={pair.contentA} overlaps={pair.overlaps} />
+                                            <ContentPreview label={`${pair.sourceB} · ${pair.nameB}`} content={pair.contentB} overlaps={pair.overlaps} />
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function ContentPreview({ label, content, overlaps }: { label: string; content: string; overlaps: string[] }) {
+    const highlighted = highlightOverlaps(content, overlaps);
+    return (
+        <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-semibold text-gray-500">{label}</span>
+            <div
+                className="text-[11px] text-gray-800 leading-relaxed max-h-40 overflow-y-auto whitespace-pre-wrap break-all bg-white rounded-lg p-2 border border-gray-100"
+                dangerouslySetInnerHTML={{ __html: highlighted }}
+            />
         </div>
     );
 }

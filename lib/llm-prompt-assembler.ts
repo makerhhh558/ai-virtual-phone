@@ -1067,6 +1067,12 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
         return a.order - b.order;
     });
 
+    // --- Context overload guard ---
+    const maxContext = preset?.openai_max_context;
+    if (maxContext && maxContext > 0) {
+        trimBlocksOnOverload(blocks, maxContext, activatedWBEntries);
+    }
+
     // --- Aggregate into final LLM messages ---
     // 走预设时只合并相邻的历史消息：预设条目本来就靠 role 交替表达结构，不能合。
     const finalPayload: LLMMessage[] = [];
@@ -1319,6 +1325,44 @@ function resolveWorldBookDepth(entry: WorldBookEntry): number {
     if (pos === 7) return 995; // outlet → lore section (no outlet support)
     // Fallback: lore section
     return 995;
+}
+
+/**
+ * 上下文过载裁剪：总字符量超出 maxContext 时，按 depth 从大到小裁剪 at-depth 世界书条目。
+ * 保护：角色设定前/后条目和 constant 常驻条目不可丢弃。
+ */
+function trimBlocksOnOverload(blocks: PromptBlock[], maxContextTokens: number, activatedEntries: WorldBookEntry[]): void {
+    const CHARS_PER_TOKEN = 2.5;
+    const maxChars = maxContextTokens * CHARS_PER_TOKEN;
+    const totalChars = blocks.reduce((sum, b) => sum + b.text.length, 0);
+    if (totalChars <= maxChars) return;
+
+    const wbAtDepthKeys = new Set(activatedEntries.filter(e => isWBAtDepthPosition(e)).map(e => e.key));
+    type Candidate = { blockIndex: number; depth: number; insertionOrder: number; size: number };
+    const candidates: Candidate[] = [];
+
+    for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        if (!b.marker.startsWith("WB: ")) continue;
+        const wbKey = b.marker.slice(4);
+        if (!wbAtDepthKeys.has(wbKey)) continue;
+        const entry = activatedEntries.find(e => e.key === wbKey && isWBAtDepthPosition(e));
+        if (!entry || entry.constant) continue;
+        candidates.push({ blockIndex: i, depth: entry.depth ?? 4, insertionOrder: entry.insertion_order ?? 50, size: b.text.length });
+    }
+    if (candidates.length === 0) return;
+
+    candidates.sort((a, b) => b.depth !== a.depth ? b.depth - a.depth : a.insertionOrder - b.insertionOrder);
+
+    let currentChars = totalChars;
+    const toRemove = new Set<number>();
+    for (const c of candidates) {
+        if (currentChars <= maxChars) break;
+        toRemove.add(c.blockIndex);
+        currentChars -= c.size;
+    }
+    if (toRemove.size === 0) return;
+    for (const idx of [...toRemove].sort((a, b) => b - a)) blocks.splice(idx, 1);
 }
 
 export function isWorldBookEntryActivated(entry: WorldBookEntry, contextText: string): boolean {

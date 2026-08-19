@@ -85,6 +85,7 @@ import {
 import { parseOfflineResponse, type ParsedOfflineResponse } from "./chat-offline-storage";
 import { throwIfAborted } from "./abort-utils";
 import { loadUserMood } from "./mood-storage";
+import { stripRepeatedInjection } from "./repetition-guard";
 
 
 
@@ -1767,6 +1768,7 @@ export async function buildChatPromptMessages(
     regexes: RegexConfig[];
     userIdentity: ReturnType<typeof resolveUserIdentity>;
     toolsEnabled: boolean;
+    injectedReferences: string[];
 }> {
     const chars = loadCharacters();
     const character = chars.find(c => c.id === session.contactId);
@@ -1945,7 +1947,17 @@ export async function buildChatPromptMessages(
     }
     appendEmptyGenerateGuardMessage(llmMessages, config, historyForPrompt);
 
-    return { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled };
+    // 收集注入参考文本用于复读检测
+    const injectedReferences: string[] = [];
+    if (character.persona?.trim()) injectedReferences.push(character.persona.trim());
+    if (character.personality?.trim()) injectedReferences.push(character.personality.trim());
+    for (const wb of worldBooks) {
+        for (const entry of wb.entries || []) {
+            if (!entry.disable && entry.content?.trim()) injectedReferences.push(entry.content.trim());
+        }
+    }
+
+    return { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled, injectedReferences };
 }
 
 export type ChatCompletionCallbacks = {
@@ -2277,7 +2289,7 @@ export async function generateChatCompletion(
     options?: ChatPromptBuildOptions & { signal?: AbortSignal },
     callbacks?: ChatCompletionCallbacks,
 ): Promise<ChatCompletionResult> {
-    const { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled } = await buildChatPromptMessages(session, history, options);
+    const { llmMessages, character, config, preset, regexes, userIdentity, toolsEnabled, injectedReferences } = await buildChatPromptMessages(session, history, options);
     const requestAppTags = mergeAppTags(options?.appTags, options?.promptProfile?.appTags, options?.appId ?? "chat");
 
     if (toolsEnabled && nativeToolProtocolForConfig(config) && getEnabledTools(options?.appId ?? "chat").length > 0) {
@@ -2322,6 +2334,15 @@ export async function generateChatCompletion(
             throw err;
         }
         throwIfAborted(options?.signal);
+
+        // 复读检测：移除输出中大段复述世界书/角色设定的片段
+        if (injectedReferences.length > 0) {
+            const guard = stripRepeatedInjection(filteredOutput, injectedReferences);
+            if (guard.stripped) {
+                console.warn("[ChatEngine] Repetition guard: stripped parroted injection content.");
+                filteredOutput = guard.cleaned;
+            }
+        }
 
         // Parse actions (朋友圈 etc) — strip from display text but keep tool tags
         const { cleanText: afterActionStrip, actions } = parseActionTags(filteredOutput);
