@@ -134,6 +134,9 @@ export interface AssemblerInput {
     cocreateChapterIndex?: string;
     cocreateArchivedChapterContext?: string;
     cocreateWriterNotebook?: string;
+    // 心情系统
+    userMood?: string;           // 用户当前心情描述 "emoji text"
+    moodCareEnabled?: boolean;   // 是否注入心情关心提示词
 }
 
 type PromptBlock = {
@@ -1035,6 +1038,28 @@ export function assemblePromptPayload(input: AssemblerInput): LLMMessage[] {
             }
         });
     }
+
+    // --- 心情系统：注入用户心情 + 心情关心提示词 + 心情输出指令 ---
+    if (input.userMood) {
+        const moodBlock = input.moodCareEnabled
+            ? `【用户心情状态】\n用户当前心情：${input.userMood}\n\n你需要关注用户的情绪变化。如果用户心情不好或情绪波动，请主动关心、提供安慰或聊一些轻松的话题让对方开心。用自然的方式表达关心，不要生硬或说教。`
+            : `【用户心情状态】\n用户当前心情：${input.userMood}`;
+        blocks.push({
+            text: moodBlock,
+            role: "system",
+            depth: 0,
+            order: 5,
+            marker: "userMood",
+        });
+    }
+    // 心情输出指令始终注入（让 AI 知道可以更新自己的心情）
+    blocks.push({
+        text: `【心情表达】\n你可以在回复中更新自己的心情状态。格式：[心情:emoji+简短描述]，例如 [心情:😊心情不错] [心情:😤有点烦] [心情:🥰想你了]。这个标签会被系统提取后展示在你的名字下方，用户不会在聊天气泡中看到。你可以随时更新也可以不更新，完全取决于当下的情绪和聊天氛围。不聊天时也会保留上一次的心情状态。`,
+        role: "system",
+        depth: 0,
+        order: 6,
+        marker: "moodOutputInstruction",
+    });
 
     // --- Sort: depth descending, then order ascending ---
     blocks.sort((a, b) => {

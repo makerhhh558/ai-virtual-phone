@@ -68,6 +68,9 @@ export type ChatSession = {
     groupMutes?: Record<string, string>; // (characterId | "self") → mute expiry ISO
     allowAdminActionsOnUser?: boolean; // characters may kick/mute the user (default off)
     isSpectator?: boolean; // 围观群：用户不在群内，只能生成/线下
+    // 心情系统
+    characterMood?: { emoji: string; text: string; updatedAt: string }; // 角色当前心情
+    moodCareEnabled?: boolean; // AI 是否主动关心用户心情变化
 };
 
 export type ChatMessageStatus = "sending" | "sent" | "read" | "failed";

@@ -25,6 +25,7 @@ import { triggerImmediatePost } from "@/lib/moments-engine";
 import type { Character } from "@/lib/character-types";
 import { requestNotificationPermission } from "@/lib/browser-notification";
 import { kvGet, kvSet, kvRemove } from "@/lib/kv-db";
+import { loadUserMood, saveUserMood, MOOD_EMOJI_LIST, USER_MOOD_UPDATED_EVENT, type UserMood } from "@/lib/mood-storage";
 import { formatWalletAmount, getWalletBalance, loadWalletState, WALLET_UPDATED_EVENT } from "@/lib/wallet-storage";
 import { ChatFallbackAvatar } from "./chat-fallback-avatar";
 import {
@@ -129,6 +130,78 @@ function isBrowserNotificationGranted(): boolean {
     return typeof window !== "undefined"
         && "Notification" in window
         && Notification.permission === "granted";
+}
+
+/* ══ 用户心情卡片 ══ */
+function UserMoodCard() {
+    const [mood, setMood] = useState<UserMood>(loadUserMood);
+    const [editing, setEditing] = useState(false);
+    const [draftEmoji, setDraftEmoji] = useState(mood.emoji);
+    const [draftText, setDraftText] = useState(mood.text);
+
+    const handleSave = () => {
+        const next: UserMood = { emoji: draftEmoji || "💭", text: draftText.trim() || "在线", updatedAt: new Date().toISOString() };
+        saveUserMood(next);
+        setMood(next);
+        setEditing(false);
+    };
+
+    if (!editing) {
+        return (
+            <button
+                type="button"
+                className="mx-4 mb-3 rounded-2xl bg-[var(--c-card)] px-5 py-3.5 flex items-center gap-3 w-[calc(100%-2rem)] text-left"
+                style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.025)" }}
+                onClick={() => { setDraftEmoji(mood.emoji); setDraftText(mood.text); setEditing(true); }}
+            >
+                <span className="text-[24px] leading-none">{mood.emoji}</span>
+                <div className="flex flex-col flex-1 min-w-0">
+                    <span className="ts-13 font-semibold text-[var(--c-text-title)] truncate">我的心情</span>
+                    <span className="ts-11 text-[var(--c-text)] opacity-70 truncate">{mood.text}</span>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-40 shrink-0">
+                    <polyline points="9 18 15 12 9 6" />
+                </svg>
+            </button>
+        );
+    }
+
+    return (
+        <div className="mx-4 mb-3 rounded-2xl bg-[var(--c-card)] px-5 py-4 flex flex-col gap-3" style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.025)" }}>
+            <span className="ts-13 font-semibold text-[var(--c-text-title)]">编辑我的心情</span>
+            {/* emoji 选择网格 */}
+            <div className="grid grid-cols-8 gap-1.5">
+                {MOOD_EMOJI_LIST.map(e => (
+                    <button
+                        key={e}
+                        type="button"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center text-[18px] transition-colors"
+                        style={{ background: draftEmoji === e ? "color-mix(in srgb, var(--c-accent) 18%, transparent)" : "transparent" }}
+                        onClick={() => setDraftEmoji(e)}
+                    >
+                        {e}
+                    </button>
+                ))}
+            </div>
+            {/* 文字输入 */}
+            <div className="flex items-center gap-2">
+                <span className="text-[22px]">{draftEmoji || "💭"}</span>
+                <input
+                    type="text"
+                    maxLength={30}
+                    value={draftText}
+                    onChange={e => setDraftText(e.target.value)}
+                    placeholder="此刻的心情..."
+                    className="ui-input flex-1 h-9 text-[13px]"
+                />
+            </div>
+            {/* 操作按钮 */}
+            <div className="flex gap-2 justify-end">
+                <button type="button" className="ui-btn ui-btn-outline h-8 px-4 ts-12" onClick={() => setEditing(false)}>取消</button>
+                <button type="button" className="ui-btn ui-btn-primary h-8 px-4 ts-12" onClick={handleSave}>保存</button>
+            </div>
+        </div>
+    );
 }
 
 /* ══════════════════════════════════════════
@@ -336,7 +409,8 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
                         </div>
                     </div>
 
-
+                    {/* 用户心情卡片 */}
+                    <UserMoodCard />
 
                     <button
                         type="button"

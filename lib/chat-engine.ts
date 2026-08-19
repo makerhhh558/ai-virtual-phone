@@ -84,6 +84,7 @@ import {
 } from "./bilingual-prompt-defaults";
 import { parseOfflineResponse, type ParsedOfflineResponse } from "./chat-offline-storage";
 import { throwIfAborted } from "./abort-utils";
+import { loadUserMood } from "./mood-storage";
 
 
 
@@ -1927,6 +1928,9 @@ export async function buildChatPromptMessages(
         offlineBilingualInstruction,
         offlineSummaryTag: preset?.story_summary_tag?.trim() || "summary",
         nativeToolHistory: usesNativeActions,
+        // 心情系统
+        userMood: (() => { const m = loadUserMood(); return `${m.emoji} ${m.text}`; })(),
+        moodCareEnabled: session.moodCareEnabled,
     });
     if (promptProfile?.output === "plain_text") {
         llmMessages.push({

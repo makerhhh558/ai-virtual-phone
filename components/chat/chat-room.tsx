@@ -78,6 +78,7 @@ import {
     matchChatScreenEffectRule,
     rollChatDiceFace,
 } from "@/lib/chat-screen-effects";
+import { parseMoodFromResponse as parseMoodFromAIResponse, stripMoodTag as stripMoodTagFromResponse } from "@/lib/mood-storage";
 import { abortableDelay, throwIfAborted } from "@/lib/abort-utils";
 import { GROUP_SELF_KEY, canGroupAdminAct, applyGroupAdminAction, buildGroupAdminNoticeText, getGroupMemberDisplayName, getGroupMuteRemainingMs, getGroupRole, isGroupMuted, formatMuteRemainingLabel, resolveGroupMemberKeyByName, type GroupAdminAction } from "@/lib/group-admin";
 import { extractTextToolDirectiveText } from "@/lib/text-tool-protocol";
@@ -1086,6 +1087,8 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
     const [showVideoCall, setShowVideoCall] = useState(false);
     const [callInitiator, setCallInitiator] = useState<"user" | "character">("user");
     const [callInitiatorName, setCallInitiatorName] = useState<string>("");
+    // 角色心情本地状态（props session 不可变，靠本地 state 驱动 UI 刷新）
+    const [characterMoodLocal, setCharacterMoodLocal] = useState(session.characterMood);
     const [userIdentity, setUserIdentity] = useState<UserIdentity | null>(null);
     const [enterToSendEnabled, setEnterToSendEnabled] = useState(() => loadChatAppSettings().enterToSendEnabled === true);
 
@@ -2697,6 +2700,15 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
         const previousState = session.isGroup
             ? getLatestStateValues(session.id)
             : getLatestCharacterStateValues(session.contactId);
+
+        // 心情系统：从原始回复中解析并更新角色心情，然后从文本中移除标签
+        const parsedMood = parseMoodFromAIResponse(aiResponseText);
+        if (parsedMood) {
+            const sessions = loadChatSessions().map(s => s.id === session.id ? { ...s, characterMood: parsedMood } : s);
+            saveChatSessions(sessions);
+            setCharacterMoodLocal(parsedMood);
+            aiResponseText = stripMoodTagFromResponse(aiResponseText);
+        }
 
         const { parts: rawParts, stateValues, freshStateValues, statusPanel, innerMonologue } = parseAIResponse(aiResponseText, previousState);
         const parts = stripInvalidStickerParts(rawParts);
@@ -5183,14 +5195,20 @@ export function ChatRoom({ session, onBack }: ChatRoomProps) {
                     <button className="page-back-btn" type="button" onClick={onBack} aria-label="返回">
                         <ChevronLeft size={24} strokeWidth={1.5} />
                     </button>
-                    <span className="page-title" style={{ position: 'relative' }}>
-                        {offlineMode ? "线下 · " : ""}
-                        {session.isGroup
-                            ? `${session.groupName || "群聊"}(${(session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1)})`
-                            : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
-                        {(isGenerating || isOfflineGenerating) && (
+                    <span className="page-title" style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: 1.2 }}>
+                        <span>
+                            {offlineMode ? "线下 · " : ""}
+                            {session.isGroup
+                                ? `${session.groupName || "群聊"}(${(session.participantIds?.length || 0) + (session.isSpectator ? 0 : 1)})`
+                                : (session.alias || character?.name || `User_${session.contactId.slice(-4)}`)}
+                        </span>
+                        {(isGenerating || isOfflineGenerating) ? (
                             <span className="chat-typing-indicator">
                                 {offlineMode ? "线下生成中" : "对方正在输入"}<span className="chat-typing-dots"><i/><i/><i/></span>
+                            </span>
+                        ) : (
+                            <span className="chat-character-mood" style={{ fontSize: '11px', opacity: 0.7, fontWeight: 400, marginTop: 1 }}>
+                                {characterMoodLocal?.emoji || "💭"} {characterMoodLocal?.text || "在线"}
                             </span>
                         )}
                     </span>
